@@ -42,6 +42,7 @@ func ServerStateRefreshFunc(
 	return func() (interface{}, string, int, error) {
 		serverNew, err := servers.Get(client, instanceID).Extract()
 		if err != nil {
+			log.Printf("[INFO] Instance not found: %s", err)
 			if _, ok := err.(gophercloud.ErrDefault404); ok {
 				log.Printf("[INFO] 404 on ServerStateRefresh, returning DELETED")
 				return nil, "DELETED", 0, nil
@@ -107,33 +108,20 @@ func DeleteServer(state multistep.StateBag, instance string) error {
 		return err
 	}
 
-	maxNumErrors := 10
-	numErrors := 0
-
 	ui.Say(fmt.Sprintf("Terminating the source server: %s ...", instance))
-	for {
-		if config.ForceDelete {
-			err = servers.ForceDelete(computeClient, instance).ExtractErr()
-		} else {
-			err = servers.Delete(computeClient, instance).ExtractErr()
-		}
+	if config.ForceDelete {
+		err = servers.ForceDelete(computeClient, instance).ExtractErr()
+	} else {
+		err = servers.Delete(computeClient, instance).ExtractErr()
+	}
 
-		if err == nil {
-			break
+	if err != nil {
+		if err.Error() == "Resource not found" {
+			return nil
 		}
-
-		if _, ok := err.(gophercloud.ErrDefault500); !ok {
-			err = fmt.Errorf("Error terminating server, may still be around: %s", err)
-			return err
-		}
-
-		if numErrors < maxNumErrors {
-			numErrors++
-			log.Printf("Error terminating server on (%d) time(s): %s, retrying ...", numErrors, err)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		err = fmt.Errorf("Error terminating server, maximum number (%d) reached: %s", numErrors, err)
+		err := fmt.Errorf("Error deleting server: %s", err)
+		state.Put("error", err)
+		ui.Error(err.Error())
 		return err
 	}
 
